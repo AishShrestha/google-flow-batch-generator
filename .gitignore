@@ -1,12 +1,40 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Browser profiles (persistent sessions)
 .playwright-profile/
+.gemini-profile/
+
+# Environment
 .env
+
+# State and runtime artifacts
 state.json
 output/
 errors/
+
+# Logs
 *.log
 
 # Kokoro TTS
 .venv/
 models/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated prompt outputs (Stage 1 output)
+prompts/myvideo.md
+prompts/*.generated.md
+
+# Script inputs (personal narration content)
+scripts/*.txt
+!scripts/sample.txt

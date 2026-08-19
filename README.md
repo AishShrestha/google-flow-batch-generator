@@ -1,48 +1,125 @@
 # Google Flow Batch Generator
 
-Automates batch image generation in Google Flow using Playwright. Takes a Markdown file with image prompts, submits them one by one to Google Flow, downloads the generated images, and tracks progress for resumability.
+Automates the full YouTube short-form video pipeline: script → image prompts (Gemini) → images (Google Flow) → narration (Kokoro TTS). Playwright drives real browsers; persistent profiles keep you logged in.
+
+## Pipeline
+
+```
+scripts/video.txt ──gen-prompts──▶ prompts/video.md ──generate──▶ output/NNN/*.png
+                                                                       │
+ scripts/video.txt ──────────────────tts─────────────────────▶ output/audio/*.wav
+```
+
+Three independent stages, each resumable:
+
+| Stage | Command | Output |
+|---|---|---|
+| 1. Script → image prompts | `pnpm gen-prompts` | `prompts/*.md` |
+| 2. Prompts → images | `pnpm generate` | `output/NNN/*.png` |
+| 3. Script → narration | `pnpm tts` | `output/audio/*.wav` |
 
 ## Quick Start
 
 ```bash
 # Install dependencies
-npm install
+pnpm install
+
+# Install Playwright Chromium browser
+pnpm exec playwright install chromium
 
 # Copy and edit config
 cp .env.example .env
 
-# Dry run — parse and verify prompts
-npm run generate -- prompts/sample-prompts.md --dry-run
+# ─── Stage 1: Generate image prompts via Gemini ────────────────
+# First time: log into Gemini
+pnpm gen-prompts:inspect
+# → browser opens gemini.google.com, log in, Ctrl+C when done
 
-# Inspect Google Flow UI (first time setup)
-npm run inspect
+# Dry run — verify script batching
+pnpm gen-prompts scripts/myvideo.txt --dry-run
+
+# Generate all prompts (batches of 20 lines)
+pnpm gen-prompts scripts/myvideo.txt
+# → writes prompts/myvideo.md
+
+# Override model or batch size
+pnpm gen-prompts scripts/myvideo.txt --model "3.7 Flash" --batch 30
+
+# Custom output path
+pnpm gen-prompts scripts/myvideo.txt --output prompts/episode-01.md
+
+# ─── Stage 2: Generate images via Google Flow ───────────────────
+# First time: log into Google Flow
+pnpm inspect
+
+# Dry run — verify prompt parsing
+pnpm generate prompts/myvideo.md --dry-run
 
 # Generate all images
-npm run generate -- prompts/sample-prompts.md
+pnpm generate prompts/myvideo.md
 
 # Start from prompt 5
-npm run generate -- prompts/sample-prompts.md --start 5
+pnpm generate prompts/myvideo.md --start 5
 
 # Only process 10 prompts
-npm run generate -- prompts/sample-prompts.md --limit 10
+pnpm generate prompts/myvideo.md --limit 10
 
 # Force regenerate all (ignore completed)
-npm run generate -- prompts/sample-prompts.md --force
+pnpm generate prompts/myvideo.md --force
 
 # Manual intervention mode
-npm run generate -- prompts/sample-prompts.md --manual
+pnpm generate prompts/myvideo.md --manual
+
+# ─── Stage 3: Generate narration via Kokoro TTS ─────────────────
+# One-time TTS setup (Python venv + model download)
+pnpm setup-tts
+
+# Generate narration audio
+pnpm tts scripts/myvideo.txt
+pnpm tts scripts/myvideo.txt --voice af_heart --speed 1.1
 ```
 
 ## First Run
 
-1. Run `npm run inspect` to launch the browser and log into Google Flow.
+### Gemini (Stage 1)
+
+1. Run `pnpm gen-prompts:inspect` to launch the browser and log into Gemini.
+2. The persistent browser profile (`.gemini-profile/`) stores your session.
+3. Close with Ctrl+C when done.
+4. Run `pnpm gen-prompts scripts/myvideo.txt --dry-run` to verify batching.
+5. Run the full generation with `pnpm gen-prompts scripts/myvideo.txt`.
+
+### Google Flow (Stage 2)
+
+1. Run `pnpm inspect` to launch the browser and log into Google Flow.
 2. The persistent browser profile (`.playwright-profile/`) stores your session.
 3. Navigate to the image generation interface and verify the UI.
 4. Close with Ctrl+C when done.
-5. Run `npm run generate -- prompts/sample-prompts.md --dry-run` to verify prompt parsing.
-6. Run the full batch with `npm run generate -- prompts/sample-prompts.md`.
+5. Run `pnpm generate prompts/myvideo.md --dry-run` to verify prompt parsing.
+6. Run the full batch with `pnpm generate prompts/myvideo.md`.
+
+### TTS (Stage 3)
+
+1. Run `pnpm setup-tts` to create the Python venv and download the Kokoro model (~109MB).
+2. Run `pnpm tts scripts/myvideo.txt` to generate narration.
 
 ## Input Format
+
+### Stage 1 input: narration script
+
+Plain text, one sentence per line:
+
+```
+There is a strange moment.
+Someone stops texting you.
+The silence becomes loud.
+```
+
+The script is split into batches of 20 lines (configurable via `GEMINI_BATCH_SIZE`). Each batch is sent to Gemini with the master prompt (`prompts/master-prompt.md`), which enforces the doodle-animation visual style.
+
+### Stage 2 input: image prompts markdown
+
+Output of Stage 1, or hand-written:
 
 ```markdown
 [L1] LINE 1:
@@ -60,7 +137,13 @@ The parser detects `Image Prompt:` headers and extracts the prompt text. It hand
 - Markdown separators (`---`)
 - 500+ prompts
 
+### Stage 3 input: narration script
+
+Same plain text as Stage 1. Kokoro chunks it into ~500-char segments and concatenates into one WAV.
+
 ## Output Structure
+
+### Images
 
 ```
 output/
@@ -83,9 +166,16 @@ output/
 │   └── 001-03.png
 ```
 
+### Audio
+
+```
+output/audio/
+└── narration.wav
+```
+
 ## Resumability
 
-`state.json` tracks completed and failed prompts. If the app crashes, restart it and it picks up where it left off.
+`state.json` tracks completed and failed prompts for Stage 2. If the app crashes, restart it and it picks up where it left off.
 
 Use `--force` to regenerate already-completed prompts.
 
@@ -100,6 +190,8 @@ On failure, diagnostic info is saved to `errors/`:
 
 See `.env.example` for all options:
 
+### Google Flow
+
 | Variable | Default | Description |
 |---|---|---|
 | `FLOW_URL` | `https://labs.google/fx/tools/flow` | Google Flow URL |
@@ -111,16 +203,30 @@ See `.env.example` for all options:
 | `HEADLESS` | `false` | Run browser headless |
 | `MAX_IMAGES_PER_PROMPT` | `4` | Max images to download per prompt |
 
+### Gemini
+
+| Variable | Default | Description |
+|---|---|---|
+| `GEMINI_URL` | `https://gemini.google.com/app` | Gemini chat URL |
+| `GEMINI_PROFILE_DIR` | `.gemini-profile` | Separate profile for Gemini |
+| `GEMINI_MODEL` | `3.1 Pro` | Primary model |
+| `GEMINI_FALLBACK_MODEL` | `3.7 Flash` | Fallback on rate limit |
+| `GEMINI_BATCH_SIZE` | `20` | Lines per batch |
+| `GEMINI_TIMEOUT_MS` | `120000` | Response timeout (2 min) |
+| `GEMINI_HEADLESS` | `false` | Run Gemini browser headless |
+
 ## Selectors
 
-All Google Flow UI selectors are in `src/selectors.ts`. If Google Flow's UI changes, update that file only.
+All Google Flow UI selectors are in `src/selectors.ts`. Gemini selectors are in `src/prompt-gen.ts`. If either UI changes, update the selectors in those files only.
 
-Use `npm run inspect` to identify current selectors via DevTools.
+Use `pnpm inspect` / `pnpm gen-prompts:inspect` to identify current selectors via DevTools.
 
 ## Architecture
 
 ```
-Markdown Parser → Prompt Queue → State Manager → Google Flow Automation → Image Downloader → Output Manager
+Stage 1: Script → GeminiPromptGenerator → prompts/*.md
+Stage 2: prompts/*.md → Parser → StateManager → GoogleFlowAutomation → Downloader → output/
+Stage 3: Script → Kokoro TTS → output/audio/*.wav
 ```
 
 The `ImageGenerator` interface in `src/types.ts` allows future providers to be plugged in.
@@ -128,8 +234,8 @@ The `ImageGenerator` interface in `src/types.ts` allows future providers to be p
 ## Testing
 
 ```bash
-npm test           # Run all tests
-npm run test:watch # Watch mode
+pnpm test           # Run all tests
+pnpm test:watch     # Watch mode
 ```
 
 ## Safety
@@ -137,8 +243,8 @@ npm run test:watch # Watch mode
 - No Google password automation
 - No CAPTCHA bypass
 - No cookie/token extraction
-- Persistent browser profile for session continuity
-- Manual login required first time
+- Separate persistent browser profiles for Flow and Gemini (parallel sessions)
+- Manual login required first time for each
 - Behaves like a normal user controlling the browser
 
 ## Project Structure
@@ -146,26 +252,36 @@ npm run test:watch # Watch mode
 ```
 google-flow-batch-generator/
 ├── src/
-│   ├── index.ts        # CLI entry point
+│   ├── index.ts        # CLI entry point (generate + gen-prompts)
 │   ├── parser.ts       # Markdown prompt parser
 │   ├── flow.ts         # Google Flow automation
-│   ├── selectors.ts    # UI selectors (single file)
+│   ├── prompt-gen.ts   # Gemini prompt generation
+│   ├── selectors.ts    # Flow UI selectors
 │   ├── state.ts        # Progress tracking
 │   ├── downloader.ts   # Image download/save
 │   ├── logger.ts       # Terminal output
-│   └── types.ts        # Shared types
+│   ├── types.ts        # Shared types
+│   └── tts/
+│       └── kokoro_tts.py  # Kokoro TTS engine
 ├── tests/
 │   ├── parser.test.ts
 │   └── state.test.ts
 ├── prompts/
-│   └── sample-prompts.md
+│   ├── master-prompt.md    # Stage 1 master prompt
+│   └── sample-prompts.md   # Example Stage 2 input
+├── scripts/
+│   ├── run-tts.sh
+│   └── setup-tts.sh
 ├── output/
 ├── errors/
 ├── .playwright-profile/
+├── .gemini-profile/
 ├── state.json
 ├── .env.example
 ├── .gitignore
 ├── package.json
+├── pnpm-lock.yaml
+├── pnpm-workspace.yaml
 ├── tsconfig.json
 └── README.md
 ```

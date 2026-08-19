@@ -37,6 +37,27 @@ export interface GeneratorConfig {
   viewportHeight: number;
 }
 
+export interface GeminiConfig {
+  url: string;
+  profileDir: string;
+  model: string;
+  fallbackModel: string;
+  batchSize: number;
+  timeoutMs: number;
+  headless: boolean;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+export interface PromptGenArgs {
+  inputFile: string;
+  outputFile: string;
+  dryRun: boolean;
+  model: string | null;
+  batchSize: number | null;
+  inspect: boolean;
+}
+
 export interface ImageGenerator {
   initialize(): Promise<void>;
   ensureLoggedIn(): Promise<void>;

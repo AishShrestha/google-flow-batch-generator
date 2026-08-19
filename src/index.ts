@@ -3,14 +3,15 @@
 import 'dotenv/config';
 import { parseArgs } from 'util';
 import { existsSync } from 'fs';
-import { resolve, join } from 'path';
+import { resolve, join, dirname } from 'path';
 import { parseFile } from './parser.js';
 import { StateManager } from './state.js';
 import { GoogleFlowAutomation } from './flow.js';
 import { Logger } from './logger.js';
-import { CLIArgs, GeneratorConfig, ImagePrompt } from './types.js';
+import { CLIArgs, GeneratorConfig, ImagePrompt, GeminiConfig, PromptGenArgs } from './types.js';
 import { savePromptText } from './downloader.js';
-import { mkdir } from 'fs/promises';
+import { mkdir, writeFile } from 'fs/promises';
+import { generatePrompts, dryRun as promptDryRun, loadMasterPrompt } from './prompt-gen.js';
 
 const logger = new Logger();
 
@@ -105,6 +106,20 @@ function loadConfig(): GeneratorConfig {
     maxImagesPerPrompt: parseInt(process.env.MAX_IMAGES_PER_PROMPT || '4', 10),
     viewportWidth: parseInt(process.env.VIEWPORT_WIDTH || '1280', 10),
     viewportHeight: parseInt(process.env.VIEWPORT_HEIGHT || '800', 10),
+  };
+}
+
+function loadGeminiConfig(): GeminiConfig {
+  return {
+    url: process.env.GEMINI_URL || 'https://gemini.google.com/app',
+    profileDir: process.env.GEMINI_PROFILE_DIR || '.gemini-profile',
+    model: process.env.GEMINI_MODEL || '3.1 Pro',
+    fallbackModel: process.env.GEMINI_FALLBACK_MODEL || '3.7 Flash',
+    batchSize: parseInt(process.env.GEMINI_BATCH_SIZE || '20', 10),
+    timeoutMs: parseInt(process.env.GEMINI_TIMEOUT_MS || '120000', 10),
+    headless: process.env.GEMINI_HEADLESS === 'true',
+    viewportWidth: parseInt(process.env.GEMINI_VIEWPORT_WIDTH || '1280', 10),
+    viewportHeight: parseInt(process.env.GEMINI_VIEWPORT_HEIGHT || '800', 10),
   };
 }
 
@@ -297,6 +312,14 @@ async function runBatch(
 }
 
 async function main(): Promise<void> {
+  // Subcommand dispatch: gen-prompts vs default (generate)
+  const firstArg = process.argv[2];
+
+  if (firstArg === 'gen-prompts') {
+    await runPromptGen();
+    return;
+  }
+
   const args = parseCLI();
   if (!args) return;
 
@@ -337,6 +360,134 @@ async function main(): Promise<void> {
 
   // Full batch
   await runBatch(args, config, prompts);
+}
+
+function parsePromptGenArgs(): PromptGenArgs | null {
+  const { values, positionals } = parseArgs({
+    args: process.argv.slice(3),
+    options: {
+      output: { type: 'string', default: '' },
+      'dry-run': { type: 'boolean', default: false },
+      model: { type: 'string' },
+      batch: { type: 'string' },
+      inspect: { type: 'boolean', default: false },
+      help: { type: 'boolean', default: false },
+      h: { type: 'boolean', default: false },
+    },
+    allowPositionals: true,
+  });
+
+  if (values.help || values.h) {
+    console.log(`
+Usage: pnpm gen-prompts <script.txt> [options]
+
+Options:
+  --output <path>    Output markdown file (default: prompts/<basename>.md)
+  --model <name>    Override GEMINI_MODEL (e.g. "3.1 Pro", "3.7 Flash")
+  --batch <n>       Override batch size (default: 20)
+  --dry-run         Parse script and show batches without calling Gemini
+  --inspect         Launch Gemini browser for selector debugging
+  --help, -h        Show this help
+
+Examples:
+  pnpm gen-prompts scripts/myvideo.txt
+  pnpm gen-prompts scripts/myvideo.txt --dry-run
+  pnpm gen-prompts scripts/myvideo.txt --model "3.7 Flash" --batch 30
+`);
+    return null;
+  }
+
+  if (values.inspect && positionals.length === 0) {
+    return {
+      inputFile: '',
+      outputFile: '',
+      dryRun: false,
+      model: null,
+      batchSize: null,
+      inspect: true,
+    };
+  }
+
+  if (positionals.length === 0) {
+    console.error('Error: No script file specified.\n');
+    return null;
+  }
+
+  const inputFile = positionals[0];
+  const basename = inputFile.replace(/\.[^.]+$/, '');
+  const outputFile = values.output || `prompts/${basename.split('/').pop()}.md`;
+
+  return {
+    inputFile,
+    outputFile,
+    dryRun: values['dry-run'] || false,
+    model: values.model || null,
+    batchSize: values.batch ? parseInt(values.batch, 10) : null,
+    inspect: values.inspect || false,
+  };
+}
+
+async function runPromptGen(): Promise<void> {
+  const args = parsePromptGenArgs();
+  if (!args) return;
+
+  const config = loadGeminiConfig();
+
+  if (args.model) config.model = args.model;
+  if (args.batchSize) config.batchSize = args.batchSize;
+
+  // Inspect mode
+  if (args.inspect) {
+    logger.header('Gemini UI Inspector');
+    logger.status('Launching browser with persistent profile...');
+    logger.status(`Profile: ${config.profileDir}`);
+    logger.status(`URL: ${config.url}`);
+    logger.blank();
+    logger.status('Use DevTools to identify selectors.');
+    logger.status('Press Ctrl+C to exit.');
+
+    const { GeminiPromptGenerator } = await import('./prompt-gen.js');
+    const gemini = new GeminiPromptGenerator(config, logger);
+    await gemini.initialize();
+    const page = gemini.getPage();
+    if (page) await page.goto(config.url, { waitUntil: 'networkidle' });
+
+    await new Promise(() => {});
+    return;
+  }
+
+  // Verify input file
+  const inputPath = resolve(args.inputFile);
+  if (!existsSync(inputPath)) {
+    logger.error(`Script file not found: ${inputPath}`);
+    process.exit(1);
+  }
+
+  logger.header('Gemini Prompt Generator');
+  logger.status(`Reading ${args.inputFile}...`);
+  const script = await import('fs/promises').then((m) => m.readFile(inputPath, 'utf-8'));
+
+  if (!script.trim()) {
+    logger.error('Script file is empty.');
+    process.exit(1);
+  }
+
+  // Dry run
+  if (args.dryRun) {
+    await promptDryRun(script, config, logger);
+    return;
+  }
+
+  // Full generation
+  const markdown = await generatePrompts(script, config, logger);
+
+  // Ensure output dir exists
+  await mkdir(dirname(args.outputFile), { recursive: true });
+  await writeFile(args.outputFile, markdown, 'utf-8');
+
+  logger.blank();
+  logger.success(`Wrote ${args.outputFile}`);
+  logger.status(`Next: pnpm generate -- ${args.outputFile}`);
 }
 
 main().catch((err) => {

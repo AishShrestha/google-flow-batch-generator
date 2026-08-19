@@ -7,6 +7,8 @@
   "scripts": {
     "generate": "tsx src/index.ts",
     "inspect": "tsx src/index.ts --inspect",
+    "gen-prompts": "tsx src/index.ts gen-prompts",
+    "gen-prompts:inspect": "tsx src/index.ts gen-prompts --inspect",
     "tts": "bash scripts/run-tts.sh",
     "setup-tts": "bash scripts/setup-tts.sh",
     "test": "vitest run",
