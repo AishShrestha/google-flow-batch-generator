@@ -50,7 +50,7 @@ pnpm gen-prompts scripts/myvideo.txt --output prompts/episode-01.md
 
 # ─── Stage 2: Generate images via Google Flow ───────────────────
 # First time: log into Google Flow
-pnpm inspect
+pnpm generate:inspect
 
 # Dry run — verify prompt parsing
 pnpm generate prompts/myvideo.md --dry-run
@@ -91,7 +91,7 @@ pnpm tts scripts/myvideo.txt --voice af_heart --speed 1.1
 
 ### Google Flow (Stage 2)
 
-1. Run `pnpm inspect` to launch the browser and log into Google Flow.
+1. Run `pnpm generate:inspect` to launch the browser and log into Google Flow.
 2. The persistent browser profile (`.playwright-profile/`) stores your session.
 3. Navigate to the image generation interface and verify the UI.
 4. Close with Ctrl+C when done.
@@ -219,7 +219,7 @@ See `.env.example` for all options:
 
 All Google Flow UI selectors are in `src/selectors.ts`. Gemini selectors are in `src/prompt-gen.ts`. If either UI changes, update the selectors in those files only.
 
-Use `pnpm inspect` / `pnpm gen-prompts:inspect` to identify current selectors via DevTools.
+Use `pnpm generate:inspect` / `pnpm gen-prompts:inspect` to identify current selectors via DevTools.
 
 ## Architecture
 

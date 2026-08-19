@@ -312,12 +312,17 @@ async function runBatch(
 }
 
 async function main(): Promise<void> {
-  // Subcommand dispatch: gen-prompts vs default (generate)
+  // Subcommand dispatch: gen-prompts vs generate
   const firstArg = process.argv[2];
 
   if (firstArg === 'gen-prompts') {
     await runPromptGen();
     return;
+  }
+
+  // Strip "generate" subcommand so parseCLI sees the rest
+  if (firstArg === 'generate') {
+    process.argv.splice(2, 1);
   }
 
   const args = parseCLI();
