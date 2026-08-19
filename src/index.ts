@@ -9,7 +9,7 @@ import { StateManager } from './state.js';
 import { GoogleFlowAutomation } from './flow.js';
 import { Logger } from './logger.js';
 import { CLIArgs, GeneratorConfig, ImagePrompt, GeminiConfig, PromptGenArgs } from './types.js';
-import { savePromptText } from './downloader.js';
+import { savePromptText, isDuplicateImage } from './downloader.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { generatePrompts, dryRun as promptDryRun, loadMasterPrompt } from './prompt-gen.js';
 
@@ -196,6 +196,7 @@ async function runBatch(
   let failed = 0;
   let skipped = 0;
   const failedList: number[] = [];
+  let consecutiveFailures = 0; // ponytail: circuit breaker — pause after sustained failures
 
   // Initialize browser
   const flow = new GoogleFlowAutomation(config, logger);
@@ -224,6 +225,7 @@ async function runBatch(
 
       let attempt = 0;
       let success = false;
+      const isTimeoutError = (msg: string) => msg.includes('timed out') || msg.includes('timeout');
 
       while (attempt < config.maxRetries && !success) {
         attempt++;
@@ -233,10 +235,17 @@ async function runBatch(
           await flow.submitPrompt(prompt);
           await flow.waitForGeneration();
 
-          const outputDir = join(config.outputDir, String(index).padStart(3, '0'));
-          await mkdir(outputDir, { recursive: true });
+          // ponytail: save functions create output/NNN/ themselves — pass root, not promptDir
+          await mkdir(config.outputDir, { recursive: true });
 
-          const imagePaths = await flow.downloadGeneratedImages(outputDir);
+          const imagePaths = await flow.downloadGeneratedImages(config.outputDir, index);
+
+          // ponytail: duplicate detection — Google Flow rate-limits and returns
+          // cached/same image after sustained load. Retry with backoff if identical.
+          const isDup = await isDuplicateImage(config.outputDir, index);
+          if (isDup) {
+            throw new Error('Generated image is identical to previous prompt (likely rate-limited).');
+          }
 
           state.markCompleted(index);
           await state.save();
@@ -255,8 +264,12 @@ async function runBatch(
           await flow.saveErrorDiagnostics(index, prompt, error);
 
           if (attempt < config.maxRetries) {
-            logger.status('Retrying...');
-            await new Promise((r) => setTimeout(r, 2000));
+            // ponytail: longer backoff for duplicates + timeouts (rate-limit needs time to clear)
+            const isDupError = error.message.includes('identical to previous');
+            const isTimeout = isTimeoutError(error.message);
+            const waitMs = (isDupError || isTimeout) ? Math.max(10000, attempt * 10000) : 2000;
+            logger.status(`Retrying in ${waitMs / 1000}s...`);
+            await new Promise((r) => setTimeout(r, waitMs));
           } else {
             logger.error(`Prompt #${index} FAILED`);
             state.markFailed(index);
@@ -281,8 +294,8 @@ async function runBatch(
               try {
                 await flow.submitPrompt(prompt);
                 await flow.waitForGeneration();
-                const outputDir = join(config.outputDir, String(index).padStart(3, '0'));
-                const imagePaths = await flow.downloadGeneratedImages(outputDir);
+                await mkdir(config.outputDir, { recursive: true });
+                const imagePaths = await flow.downloadGeneratedImages(config.outputDir, index);
                 state.markCompleted(index);
                 await state.save();
                 success = true;
@@ -295,6 +308,21 @@ async function runBatch(
             }
           }
         }
+      }
+
+      // Track consecutive failures for circuit breaker
+      if (success) {
+        consecutiveFailures = 0;
+      } else {
+        consecutiveFailures++;
+      }
+
+      // ponytail: circuit breaker — after 3 consecutive failures, pause 60s.
+      // Google Flow is rate-limiting or down; hammering just wastes time.
+      if (consecutiveFailures >= 3) {
+        logger.warn(`${consecutiveFailures} consecutive failures — pausing 60s to let rate limit clear...`);
+        await new Promise((r) => setTimeout(r, 60000));
+        consecutiveFailures = 0; // reset after pause
       }
 
       // Rate limiting delay

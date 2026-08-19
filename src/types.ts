@@ -63,7 +63,7 @@ export interface ImageGenerator {
   ensureLoggedIn(): Promise<void>;
   submitPrompt(prompt: string): Promise<void>;
   waitForGeneration(): Promise<void>;
-  downloadGeneratedImages(outputDir: string): Promise<string[]>;
+  downloadGeneratedImages(outputDir: string, promptIndex: number): Promise<string[]>;
   close(): Promise<void>;
 }
 

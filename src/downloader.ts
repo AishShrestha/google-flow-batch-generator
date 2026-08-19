@@ -3,6 +3,7 @@
 import { mkdir, writeFile, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import { createHash } from 'crypto';
 import { Page, Download, Frame } from 'playwright';
 
 /**
@@ -193,4 +194,57 @@ export async function saveSvgFromFrame(
  */
 export function verifyFile(filepath: string): boolean {
   return existsSync(filepath);
+}
+
+/**
+ * Compute SHA-256 hash of a file. Used for duplicate detection.
+ * Returns null if file doesn't exist or can't be read.
+ */
+export async function hashFile(filepath: string): Promise<string | null> {
+  try {
+    if (!existsSync(filepath)) return null;
+    const data = await readFile(filepath);
+    return createHash('sha256').update(data).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if the newly saved image is identical to the previous prompt's image.
+ * Compares the first image of each prompt (NNN.png or NNN-01.png).
+ */
+export async function isDuplicateImage(
+  outputDir: string,
+  currentIndex: number
+): Promise<boolean> {
+  if (currentIndex <= 1) return false;
+
+  const padded = padNumber(currentIndex);
+  const prevPadded = padNumber(currentIndex - 1);
+
+  // Per-prompt folders: output/NNN/NNN.png, output/NNN/NNN-01.png
+  const currentCandidates = [
+    join(outputDir, padded, `${padded}.png`),
+    join(outputDir, padded, `${padded}-01.png`),
+  ];
+
+  const prevCandidates = [
+    join(outputDir, prevPadded, `${prevPadded}.png`),
+    join(outputDir, prevPadded, `${prevPadded}-01.png`),
+  ];
+
+  for (const currPath of currentCandidates) {
+    const currHash = await hashFile(currPath);
+    if (!currHash) continue;
+
+    for (const prevPath of prevCandidates) {
+      const prevHash = await hashFile(prevPath);
+      if (prevHash && prevHash === currHash) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }

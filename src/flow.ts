@@ -441,13 +441,10 @@ export class GoogleFlowAutomation implements ImageGenerator {
     return false;
   }
 
-  async downloadGeneratedImages(outputDir: string): Promise<string[]> {
+  async downloadGeneratedImages(outputDir: string, promptIndex: number): Promise<string[]> {
     if (!this.page) throw new Error('Browser not initialized');
 
     const savedPaths: string[] = [];
-
-    // runBatch passes outputDir as "output/001"; derive the prompt index from it.
-    const promptIndex = parseInt(outputDir.split(/[/\\]/).pop() || '0', 10) || 0;
 
     // Strategy 1: Try to find and click download buttons (main frame only)
     const downloadButtons = this.page.locator(SELECTORS.downloadButton);
