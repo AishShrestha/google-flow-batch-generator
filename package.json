@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Batch image generation automation for Google Flow using Playwright",
   "type": "module",
+  "packageManager": "pnpm@11.0.9",
   "scripts": {
     "generate": "tsx src/index.ts",
     "inspect": "tsx src/index.ts --inspect",
