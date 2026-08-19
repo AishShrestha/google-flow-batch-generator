@@ -1,0 +1,26 @@
+{
+  "name": "google-flow-batch-generator",
+  "version": "1.0.0",
+  "description": "Batch image generation automation for Google Flow using Playwright",
+  "type": "module",
+  "scripts": {
+    "generate": "tsx src/index.ts",
+    "inspect": "tsx src/index.ts --inspect",
+    "tts": "bash scripts/run-tts.sh",
+    "setup-tts": "bash scripts/setup-tts.sh",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["google-flow", "playwright", "automation", "image-generation"],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.45.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^22.0.0"
+  }
+}

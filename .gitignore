@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.playwright-profile/
+.env
+state.json
+output/
+errors/
+*.log
+
+# Kokoro TTS
+.venv/
+models/
